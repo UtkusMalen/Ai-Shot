@@ -86,7 +86,7 @@ impl GeminiClient {
         Err(AppError::GeminiApi("No text response received from Gemini".to_string()))
     }
     /// Sends an image and a text prompt to the Gemini API and streams the response
-    pub async fn analyze_image_stream(&self, base64_image: String, prompt: String, system_prompt: String, thinking_enabled: bool) -> Result<std::pin::Pin<Box<dyn futures::Stream<Item = Result<Vec<GeminiStreamEvent>>> + Send>>> {
+    pub async fn analyze_image_stream(&self, base64_image: String, prompt: String, system_prompt: String, thinking_enabled: bool, google_search: bool) -> Result<std::pin::Pin<Box<dyn futures::Stream<Item = Result<Vec<GeminiStreamEvent>>> + Send>>> {
         use futures::TryStreamExt;
         
         // Construct image data blob
@@ -127,6 +127,10 @@ impl GeminiClient {
 
         if thinking_enabled {
             request = request.with_thinking_budget(1024).with_thoughts_included(true);
+        }
+
+        if google_search {
+            request = request.with_tool(gemini_rust::Tool::google_search());
         }
 
         // Execute stream

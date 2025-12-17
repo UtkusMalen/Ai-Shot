@@ -65,6 +65,7 @@ pub struct Settings {
     pub model: String,
     pub system_prompt: String,
     pub thinking_enabled: bool,
+    pub google_search: bool,
 }
 
 impl Settings {
@@ -93,6 +94,7 @@ impl Settings {
             model: default_model,
             system_prompt: String::new(),
             thinking_enabled: false,
+            google_search: false,
         }
     }
 
@@ -176,7 +178,7 @@ impl SnippingTool {
                              }
                         };
                             
-                        match client.analyze_image_stream(base64_img, prompt, settings.system_prompt, settings.thinking_enabled).await {
+                        match client.analyze_image_stream(base64_img, prompt, settings.system_prompt, settings.thinking_enabled, settings.google_search).await {
                             Ok(mut stream) => {
                                 use futures::StreamExt;
                                 use crate::gemini::GeminiStreamEvent;
@@ -463,7 +465,10 @@ impl eframe::App for SnippingTool {
                                                      });
                                                      
                                                  // Thinking
-                                                 ui.checkbox(&mut self.settings.thinking_enabled, "Enable Thinking");
+                                                 ui.checkbox(&mut self.settings.thinking_enabled, "Enable Thinking (2.0 only)");
+                                                 
+                                                 // Google Search
+                                                 ui.checkbox(&mut self.settings.google_search, "Use Google Search");
                                                  
                                                  // System Prompt
                                                  ui.label("System Instructions:");
