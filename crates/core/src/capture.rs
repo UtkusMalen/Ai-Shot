@@ -20,6 +20,18 @@ impl ScreenCapturer {
         Ok(Self { screens })
     }
 
+    /// List available screens with their dimensions
+    pub fn list_screen(&self) -> Vec<String> {
+        self.screens.iter().enumerate().map(|(i, s)| {
+            format!("Monitor {}: {}x{} (scale: {})",
+                i,
+                s.display_info.width,
+                s.display_info.height,
+                s.display_info.scale_factor
+            )
+        }).collect()
+    }
+
     /// Capture the primary screen (first screen detected)
     pub fn capture_screen(&self) -> Result<DynamicImage> {
         let screen = self.screens.first()

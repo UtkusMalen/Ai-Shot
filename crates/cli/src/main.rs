@@ -9,8 +9,12 @@ use ai_shot_core::{
 use anyhow::{Context, Result};
 use std::io;
 use std::io::Write;
+use std::time::Duration;
 use arboard::Clipboard;
 use clap::Parser;
+use indicatif::{ProgressBar, ProgressStyle};
+use termimad::crossterm::style::Color;
+use termimad::MadSkin;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -27,9 +31,13 @@ struct Args {
     #[arg(short, long, default_value_t = false)]
     copy: bool,
 
-    /// Save the debug screenshot to disk
+    /// Select which monitor to capture
+    #[arg(long, default_value_t = 0)]
+    monitor: usize,
+
+    /// List available monitors and exit
     #[arg(long)]
-    debug: bool,
+    list_monitors: bool,
 }
 
 #[tokio::main]
@@ -45,15 +53,21 @@ async fn main() -> Result<()> {
         config.model_name = m;
     }
 
-    // Determine prompt
-    // Join all trailing arguments into one string
-    let mut prompt_text = args.prompt.join(" ");
+    // Initialize capturer
+    let capturer = ScreenCapturer::new().context("Failed to initialize screen capturer")?;
 
-    // If no prompt provided via CLI, capture screen first, then ask
+    // Handle --list-monitors
+    if args.list_monitors {
+        println!("Available monitors:");
+        for info in capturer.list_screen() {
+            println!("{}", info);
+        }
+        return Ok(());
+    }
 
     // Capture screen
-    let capturer = ScreenCapturer::new().context("Failed to initialize screen capturer")?;
-    let screenshot = capturer.capture_screen().context("Failed to capture screen")?;
+    let screenshot = capturer.capture_screen_by_index(args.monitor)
+        .context("Failed to capture screen. Try using --list-monitors to check indices")?;
 
     // Selection UI
     let selection_result = ui::run_selection_ui(screenshot.clone())?;
@@ -64,11 +78,8 @@ async fn main() -> Result<()> {
             let base64_img = ImageProcessor::process_selection(&screenshot, rect, ui_size)
                 .context("Failed to process selection")?;
 
-            if args.debug {
-                println!("Debug: Image processed. Size: {} chars", base64_img.len());
-            }
-
             // If prompt was empty, ask now
+            let mut prompt_text = args.prompt.join(" ");
             if prompt_text.trim().is_empty() {
                 print!("Enter prompt (default: 'Explain this'): ");
                 io::stdout().flush()?;
@@ -82,13 +93,25 @@ async fn main() -> Result<()> {
             }
 
             // Send to API
-            println!("Analyzing with {}...", config.model_name);
-            let client = GeminiClient::new(&config);
+            println!(); // Spacer
+            let spinner = ProgressBar::new_spinner();
+            spinner.set_style(
+                ProgressStyle::default_spinner()
+                    .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ ")
+                    .template("{spinner:.green} {msg}")?
+            );
+            spinner.set_message(format!("Analyzing with {}...", config.model_name));
+            spinner.enable_steady_tick(Duration::from_millis(100));
 
-            match client?.analyze_image(base64_img, prompt_text).await {
+            let client = GeminiClient::new(&config);
+            let response_result = client?.analyze_image(base64_img, prompt_text).await;
+
+            spinner.finish_and_clear();
+
+            match response_result {
                 Ok(response) => {
-                    // Print to Stdout
-                    println!("\n---\n{}\n---", response);
+                    // Render Markdown
+                    print_markdown(&response);
 
                     // Copy to clipboard if requested
                     if args.copy {
@@ -113,4 +136,14 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Helper to print markdown
+fn print_markdown(text: &str) {
+    let mut skin = MadSkin::default();
+    skin.bold.set_fg(Color::Yellow);
+    skin.italic.set_fg(Color::Magenta);
+    skin.code_block.set_bg(Color::Rgb { r: 40, g: 40, b: 40} );
+
+    skin.print_text(text);
 }
