@@ -8,6 +8,10 @@ use image::DynamicImage;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
+use directories::ProjectDirs;
 
 #[derive(Clone)]
 pub struct SelectionResult {
@@ -16,12 +20,19 @@ pub struct SelectionResult {
     pub user_prompt: Option<String>,
 }
 
-#[derive(PartialEq)]
-enum UiState {
+#[derive(Clone, Debug)]
+pub enum UiState {
     Idle,
     Loading,
-    Response(String),
+    Response { text: String, thoughts: String },
     Error(String),
+}
+
+enum StreamEvent {
+    Chunk(String),
+    Thought(String),
+    Error(String),
+    Done,
 }
 
 pub struct SnippingTool {
@@ -43,17 +54,69 @@ pub struct SnippingTool {
     
     // Markdown
     markdown_cache: CommonMarkCache,
+    
+    // Settings
+    settings: Settings,
+    show_settings: bool,
 }
 
-enum StreamEvent {
-    Chunk(String),
-    Error(String),
-    Done,
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct Settings {
+    pub model: String,
+    pub system_prompt: String,
+    pub thinking_enabled: bool,
 }
+
+impl Settings {
+    fn get_config_path() -> Option<PathBuf> {
+        if let Some(proj_dirs) = ProjectDirs::from("", "antigravity", "ai-shot") {
+            let config_dir = proj_dirs.config_dir();
+            if !config_dir.exists() {
+                let _ = fs::create_dir_all(config_dir);
+            }
+            Some(config_dir.join("settings.json"))
+        } else {
+            None
+        }
+    }
+
+    pub fn load(default_model: String) -> Self {
+        if let Some(path) = Self::get_config_path() {
+            if let Ok(content) = fs::read_to_string(path) {
+                if let Ok(settings) = serde_json::from_str::<Settings>(&content) {
+                    return settings;
+                }
+            }
+        }
+        
+        Self {
+            model: default_model,
+            system_prompt: String::new(),
+            thinking_enabled: false,
+        }
+    }
+
+    pub fn save(&self) {
+        if let Some(path) = Self::get_config_path() {
+            if let Ok(json) = serde_json::to_string_pretty(self) {
+                let _ = fs::write(path, json);
+            }
+        }
+    }
+}
+
+const AVAILABLE_MODELS: &[&str] = &[
+    "gemini-2.5-pro",
+    "gemini-flash-latest",
+    "gemini-flash-lite-latest",
+];
 
 impl SnippingTool {
     pub fn new(screenshot: DynamicImage, result: Arc<Mutex<SelectionResult>>, config: Config) -> Self {
         let (tx, rx) = channel();
+        
+        let initial_settings = Settings::load(config.model_name.clone());
+        
         Self {
             image_texture: None,
             screenshot,
@@ -67,15 +130,21 @@ impl SnippingTool {
             rx,
             tx,
             markdown_cache: CommonMarkCache::default(),
+            settings: initial_settings,
+            show_settings: false,
         }
     }
 
     fn submit_request(&mut self, selection: egui::Rect, ui_size: egui::Vec2, prompt: String) {
-        self.state = UiState::Loading;
+        // Save settings on submit
+        self.settings.save();
+        
+        self.state = UiState::Response { text: String::new(), thoughts: String::new() };
         let tx = self.tx.clone();
         let screenshot = self.screenshot.clone();
         let config = self.config.clone();
-        
+        let settings = self.settings.clone();
+
         // Spawn a thread to handle the heavy lifting
         thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -95,7 +164,11 @@ impl SnippingTool {
                         };
                         
                         // 2. Call API
-                        let client = match GeminiClient::new(&config) {
+                        // Create a temporary config with the selected model
+                        let mut task_config = config.clone();
+                        task_config.model_name = settings.model.clone();
+
+                        let client = match GeminiClient::new(&task_config) {
                              Ok(c) => c,
                              Err(e) => {
                                  let _ = tx.send(StreamEvent::Error(format!("Client init failed: {}", e)));
@@ -103,13 +176,24 @@ impl SnippingTool {
                              }
                         };
                             
-                        match client.analyze_image_stream(base64_img, prompt).await {
+                        match client.analyze_image_stream(base64_img, prompt, settings.system_prompt, settings.thinking_enabled).await {
                             Ok(mut stream) => {
                                 use futures::StreamExt;
+                                use crate::gemini::GeminiStreamEvent;
+                                
                                 while let Some(result) = stream.next().await {
                                     match result {
-                                        Ok(text) => {
-                                            let _ = tx.send(StreamEvent::Chunk(text));
+                                        Ok(events) => {
+                                            for event in events {
+                                                match event {
+                                                    GeminiStreamEvent::Text(text) => {
+                                                        let _ = tx.send(StreamEvent::Chunk(text));
+                                                    },
+                                                    GeminiStreamEvent::Thought(thought) => {
+                                                        let _ = tx.send(StreamEvent::Thought(thought));
+                                                    }
+                                                }
+                                            }
                                         },
                                         Err(e) => {
                                             let _ = tx.send(StreamEvent::Error(format!("Stream error: {}", e)));
@@ -142,23 +226,30 @@ impl eframe::App for SnippingTool {
             match event {
                 StreamEvent::Chunk(text) => {
                     match &mut self.state {
-                        UiState::Response(current) => {
-                            current.push_str(&text);
+                        UiState::Response { text: current_text, .. } => {
+                            current_text.push_str(&text);
                         },
                         _ => {
-                            self.state = UiState::Response(text);
+                            self.state = UiState::Response { text, thoughts: String::new() };
                         }
                     }
-                    // Force repaint on new update
+                    ctx.request_repaint();
+                },
+                StreamEvent::Thought(thought) => {
+                     match &mut self.state {
+                        UiState::Response { thoughts, .. } => {
+                            thoughts.push_str(&thought);
+                        },
+                        _ => {
+                            self.state = UiState::Response { text: String::new(), thoughts: thought };
+                        }
+                    }
                     ctx.request_repaint();
                 },
                 StreamEvent::Error(err) => {
-                     // If we are already streaming, we might want to append the error or show it differently
-                     // For now, just switch to Error state
                      self.state = UiState::Error(err);
                 },
                 StreamEvent::Done => {
-                    // Start a new line or finalize if needed
                 }
             }
         }
@@ -209,7 +300,7 @@ impl eframe::App for SnippingTool {
                     self.current_pos = response.interact_pointer_pos();
                     self.chat_input.clear();
                     // If we were viewing a response/error, reset to Idle
-                    if matches!(self.state, UiState::Response(_) | UiState::Error(_)) {
+                    if matches!(self.state, UiState::Response { .. } | UiState::Error(_)) {
                          self.state = UiState::Idle;
                     }
                 }
@@ -324,42 +415,95 @@ impl eframe::App for SnippingTool {
                                     let mut next_state = None;
                                     
                                     match &self.state {
-                                        UiState::Idle => {
+                                         UiState::Idle => {
                                              ui.horizontal(|ui| {
-                                                ui.label("Ask Gemini:");
-                                                let response = ui.add(
-                                                    egui::TextEdit::singleline(&mut self.chat_input)
-                                                        .desired_width(220.0)
-                                                        .hint_text("e.g., Explain this code")
-                                                        .lock_focus(true)
-                                                );
-                                                
-                                                response.request_focus();
+                                                 ui.label("Ask Gemini:");
+                                                 let response = ui.add(
+                                                     egui::TextEdit::singleline(&mut self.chat_input)
+                                                         .desired_width(200.0) // shrunk slightly to fit settings btn
+                                                         .hint_text("e.g., Explain this code")
+                                                         .lock_focus(true)
+                                                 );
+                                                 
+                                                 if !self.show_settings {
+                                                     response.request_focus();
+                                                 }
 
-                                                if ui.button("➤").clicked() || (response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
-                                                     // Submit
-                                                     let prompt = if self.chat_input.trim().is_empty() {
-                                                         "Explain this image in detail.".to_string()
-                                                     } else {
-                                                         self.chat_input.clone()
-                                                     };
+                                                 if ui.button("➤").clicked() || (response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+                                                      // Submit
+                                                      let prompt = if self.chat_input.trim().is_empty() {
+                                                          "Explain this image in detail.".to_string()
+                                                      } else {
+                                                          self.chat_input.clone()
+                                                      };
+                                                      
+                                                      self.submit_request(
+                                                          selection_rect, 
+                                                          ui.ctx().viewport_rect().size(),
+                                                          prompt
+                                                      );
+                                                 }
+                                                 
+                                                 if ui.button("⚙").clicked() {
+                                                     self.show_settings = !self.show_settings;
+                                                 }
+                                             });
+                                             
+                                             if self.show_settings {
+                                                 ui.separator();
+                                                 ui.label("Settings");
+                                                 
+                                                 // Model Selector
+                                                 egui::ComboBox::from_label("Model")
+                                                     .selected_text(&self.settings.model)
+                                                     .show_ui(ui, |ui| {
+                                                         for model in AVAILABLE_MODELS {
+                                                             ui.selectable_value(&mut self.settings.model, model.to_string(), *model);
+                                                         }
+                                                     });
                                                      
-                                                     self.submit_request(
-                                                         selection_rect, 
-                                                         ui.ctx().viewport_rect().size(),
-                                                         prompt
-                                                     );
-                                                }
-                                            });
-                                        },
+                                                 // Thinking
+                                                 ui.checkbox(&mut self.settings.thinking_enabled, "Enable Thinking");
+                                                 
+                                                 // System Prompt
+                                                 ui.label("System Instructions:");
+                                                 ui.add(
+                                                     egui::TextEdit::multiline(&mut self.settings.system_prompt)
+                                                         .desired_rows(3)
+                                                         .desired_width(f32::INFINITY)
+                                                 );
+                                             }
+                                         },
                                         UiState::Loading => {
                                             ui.horizontal(|ui| {
                                                 ui.spinner();
                                                 ui.label("Analyzing...");
                                             });
                                         },
-                                        UiState::Response(text) => {
-                                            ui.heading("Gemini says:");
+                                        UiState::Response { text, thoughts } => {
+                                            ui.horizontal(|ui| {
+                                                ui.heading("Gemini says:");
+                                                if text.is_empty() && thoughts.is_empty() {
+                                                    ui.spinner();
+                                                }
+                                            });
+                                            
+                                            // Display Thoughts if any
+                                            if !thoughts.is_empty() {
+                                                egui::CollapsingHeader::new("Thinking Process")
+                                                    .default_open(true)
+                                                    .show(ui, |ui| {
+                                                        egui::ScrollArea::vertical()
+                                                            .max_height(150.0)
+                                                            .id_salt("thoughts_scroll")
+                                                            .show(ui, |ui| {
+                                                                ui.label(egui::RichText::new(thoughts).monospace().small().color(egui::Color32::LIGHT_GRAY));
+                                                            });
+                                                    });
+                                                ui.add_space(8.0);
+                                            }
+
+                                            // Display Response
                                             egui::ScrollArea::vertical()
                                                 .max_height(300.0)
                                                 .show(ui, |ui| {
