@@ -34,3 +34,4 @@ eframe = "0.33.3"
 dotenvy = "0.15.7"
 
 url = "2.5.7"
+egui_commonmark = "0.22.0"

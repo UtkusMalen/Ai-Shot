@@ -9,6 +9,3 @@ anyhow.workspace = true
 tokio.workspace = true
 clap.workspace = true
 dotenvy.workspace = true
-arboard.workspace = true
-termimad.workspace = true
-indicatif.workspace = true

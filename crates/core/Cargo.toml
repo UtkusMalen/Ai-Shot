@@ -11,4 +11,7 @@ base64.workspace = true
 eframe.workspace = true
 dotenvy.workspace = true
 url.workspace = true
+arboard.workspace = true
+tokio.workspace = true
 image.workspace = true
+egui_commonmark.workspace = true
