@@ -20,7 +20,7 @@ impl ImageProcessor {
 
         // Map coordinates
         let x = (selection.min.x * scale_x).max(0.0) as u32;
-        let y = (selection.height() * scale_y) as u32;
+        let y = (selection.min.y * scale_y).max(0.0) as u32;
 
         let mut width = (selection.width() * scale_x) as u32;
         let mut height = (selection.height() * scale_y) as u32;
