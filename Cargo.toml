@@ -35,3 +35,4 @@ dotenvy = "0.15.7"
 
 url = "2.5.7"
 egui_commonmark = "0.22.0"
+futures = "0.3"

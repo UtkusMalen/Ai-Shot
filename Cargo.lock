@@ -156,6 +156,7 @@ dependencies = [
  "dotenvy",
  "eframe",
  "egui_commonmark",
+ "futures",
  "gemini-rust",
  "image 0.25.9",
  "screenshots",

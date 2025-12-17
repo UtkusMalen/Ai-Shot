@@ -38,11 +38,17 @@ pub struct SnippingTool {
     // API State
     config: Config,
     state: UiState,
-    rx: Receiver<std::result::Result<String, String>>,
-    tx: Sender<std::result::Result<String, String>>,
+    rx: Receiver<StreamEvent>,
+    tx: Sender<StreamEvent>,
     
     // Markdown
     markdown_cache: CommonMarkCache,
+}
+
+enum StreamEvent {
+    Chunk(String),
+    Error(String),
+    Done,
 }
 
 impl SnippingTool {
@@ -78,24 +84,48 @@ impl SnippingTool {
 
             match runtime {
                 Ok(rt) => {
-                    let res = rt.block_on(async {
+                    rt.block_on(async {
                         // 1. Process Image
-                        let base64_img = ImageProcessor::process_selection(&screenshot, selection, ui_size)
-                            .map_err(|e| format!("Image processing failed: {}", e))?;
+                        let base64_img = match ImageProcessor::process_selection(&screenshot, selection, ui_size) {
+                            Ok(img) => img,
+                            Err(e) => {
+                                let _ = tx.send(StreamEvent::Error(format!("Image processing failed: {}", e)));
+                                return;
+                            }
+                        };
                         
                         // 2. Call API
-                        let client = GeminiClient::new(&config)
-                            .map_err(|e| format!("Client init failed: {}", e))?;
+                        let client = match GeminiClient::new(&config) {
+                             Ok(c) => c,
+                             Err(e) => {
+                                 let _ = tx.send(StreamEvent::Error(format!("Client init failed: {}", e)));
+                                 return;
+                             }
+                        };
                             
-                        client.analyze_image(base64_img, prompt)
-                            .await
-                            .map_err(|e| format!("Gemini API Error: {}", e))
+                        match client.analyze_image_stream(base64_img, prompt).await {
+                            Ok(mut stream) => {
+                                use futures::StreamExt;
+                                while let Some(result) = stream.next().await {
+                                    match result {
+                                        Ok(text) => {
+                                            let _ = tx.send(StreamEvent::Chunk(text));
+                                        },
+                                        Err(e) => {
+                                            let _ = tx.send(StreamEvent::Error(format!("Stream error: {}", e)));
+                                        }
+                                    }
+                                }
+                                let _ = tx.send(StreamEvent::Done);
+                            },
+                            Err(e) => {
+                                let _ = tx.send(StreamEvent::Error(format!("Gemini API Error: {}", e)));
+                            }
+                        }
                     });
-                    
-                    let _ = tx.send(res);
                 }
                 Err(e) => {
-                    let _ = tx.send(Err(format!("Failed to create runtime: {}", e)));
+                    let _ = tx.send(StreamEvent::Error(format!("Failed to create runtime: {}", e)));
                 }
             }
         });
@@ -105,10 +135,28 @@ impl SnippingTool {
 impl eframe::App for SnippingTool {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Check for async results
-        if let Ok(res) = self.rx.try_recv() {
-            match res {
-                Ok(text) => self.state = UiState::Response(text),
-                Err(err) => self.state = UiState::Error(err),
+        while let Ok(event) = self.rx.try_recv() {
+            match event {
+                StreamEvent::Chunk(text) => {
+                    match &mut self.state {
+                        UiState::Response(current) => {
+                            current.push_str(&text);
+                        },
+                        _ => {
+                            self.state = UiState::Response(text);
+                        }
+                    }
+                    // Force repaint on new update
+                    ctx.request_repaint();
+                },
+                StreamEvent::Error(err) => {
+                     // If we are already streaming, we might want to append the error or show it differently
+                     // For now, just switch to Error state
+                     self.state = UiState::Error(err);
+                },
+                StreamEvent::Done => {
+                    // Start a new line or finalize if needed
+                }
             }
         }
 
@@ -247,15 +295,21 @@ impl eframe::App for SnippingTool {
                     let mut window_x = selection_rect.center().x - (window_width / 2.0);
                     window_x = window_x.clamp(10.0, screen_rect.width() - window_width - 10.0);
 
-                    // Position below selection, flip to above if not enough space
+                    // Position logic
+                    let mut pivot = egui::Align2::LEFT_TOP;
                     let mut window_y = selection_rect.max.y + spacing;
-                    if window_y + 150.0 > screen_rect.max.y { // Assuming 150px height for safety
-                         window_y = selection_rect.min.y - 150.0 - spacing; // Default height guess
-                         if window_y < 0.0 { window_y = 10.0; } // Fallback
+                    
+                    let space_below = screen_rect.max.y - window_y;
+                    
+                    // If less than 400px below, check if we have more space above
+                    if space_below < 400.0 && selection_rect.min.y > space_below {
+                        pivot = egui::Align2::LEFT_BOTTOM;
+                        window_y = selection_rect.min.y - spacing;
                     }
 
                     egui::Area::new(egui::Id::new("interaction_area"))
                         .fixed_pos(egui::pos2(window_x, window_y))
+                        .pivot(pivot)
                         .show(ctx, |ui| {
                              egui::Frame::popup(ui.style())
                                 .fill(egui::Color32::from_rgb(30, 30, 30))
