@@ -6,6 +6,7 @@ use ai_shot_core::{
 };
 use anyhow::{Context, Result};
 use clap::Parser;
+use std::process::Command;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -29,6 +30,10 @@ struct Args {
     /// List available monitors and exit
     #[arg(long)]
     list_monitors: bool,
+
+    /// Run in background mode, listening for Ctrl+Alt+X
+    #[arg(long)]
+    daemon: bool,
 }
 
 #[tokio::main]
@@ -37,6 +42,53 @@ async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
     init();
     let args = Args::parse();
+
+    if args.daemon {
+        println!("Starting Daemon Mode (Ctrl+Alt+X to capture)");
+        use rdev::{listen, EventType, Key};
+        // rdev callback is FnMut, but state needs to persist.
+        // wait, listen takes a callback.
+        // We can capture mut variables in closure?
+        // listen signature: `pub fn listen<F>(callback: F) -> Result<(), ListenError> where F: FnMut(Event) + 'static` (on some platforms) or just `Fn(Event)`.
+        // If it's Fn, we need interior mutability. If FnMut, we are good.
+        // rdev listen callback is usually `FnMut`.
+        
+        let mut ctrl = false;
+        let mut alt = false;
+        
+        if let Err(error) = listen(move |event| {
+            match event.event_type {
+                EventType::KeyPress(key) => {
+                    match key {
+                        Key::ControlLeft | Key::ControlRight => ctrl = true,
+                        Key::Alt | Key::AltGr => alt = true,
+                        Key::KeyX => {
+                            if ctrl && alt {
+                                println!("Hotkey triggered! Launching capture...");
+                                if let Ok(exe) = std::env::current_exe() {
+                                    if let Err(e) = Command::new(exe).spawn() {
+                                        eprintln!("Failed to spawn child: {}", e);
+                                    }
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                EventType::KeyRelease(key) => {
+                    match key {
+                        Key::ControlLeft | Key::ControlRight => ctrl = false,
+                        Key::Alt | Key::AltGr => alt = false,
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+        }) {
+            eprintln!("Error: {:?}", error);
+        }
+        return Ok(());
+    }
 
     // Load config and override model if specified via CLI
     let mut config = Config::load().context("Failed to load configuration")?;

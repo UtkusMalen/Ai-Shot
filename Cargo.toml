@@ -29,6 +29,8 @@ base64 = "0.22.1"
 
 # UI / Overlay
 eframe = "0.33.3"
+global-hotkey = "0.6.0"
+winit = "0.29"
 
 # Environment
 dotenvy = "0.15.7"
