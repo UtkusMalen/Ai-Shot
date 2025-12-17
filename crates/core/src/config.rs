@@ -59,14 +59,15 @@ impl ConfigBuilder {
     /// The API key is required and will return an error if not found.
     ///
     /// # Errors
-    /// Returns [`AppError::MissingEnvVar`] if `GEMINI_API_KEY` is not set
-    /// and no API key was provided via [`Self::with_api_key`].
+    /// Returns [`AppError`] if configuration validation fails.
+    /// Note: `GEMINI_API_KEY` is no longer strictly required at build time
+    /// and can be provided later via UI settings.
     pub fn build(self) -> Result<Config> {
-        // Try explicit value first, then environment variable
+        // Try explicit value first, then environment variable, then default to empty
         let api_key = self
             .api_key
             .or_else(|| env::var("GEMINI_API_KEY").ok())
-            .ok_or_else(|| AppError::MissingEnvVar("GEMINI_API_KEY".to_string()))?;
+            .unwrap_or_default();
 
         // Model has a sensible default
         let model_name = self
@@ -100,7 +101,7 @@ impl Config {
     /// It expects `GEMINI_API_KEY` to be set in the environment or `.env` file.
     ///
     /// # Errors
-    /// Returns [`AppError::MissingEnvVar`] if `GEMINI_API_KEY` is not found.
+    /// Returns error if configuration loading fails.
     pub fn load() -> Result<Self> {
         Self::builder().build()
     }

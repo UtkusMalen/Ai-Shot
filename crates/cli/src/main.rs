@@ -91,7 +91,7 @@ fn build_config(args: &Args) -> Result<Config> {
     }
 
     builder.build().context(
-        "Failed to load configuration. Ensure GEMINI_API_KEY is set in environment or .env file",
+        "Failed to load configuration.",
     )
 }
 
@@ -100,7 +100,7 @@ fn run_daemon() -> Result<()> {
     use rdev::{listen, EventType, Key};
     use std::sync::Arc;
 
-    println!("🎯 AI-Shot Daemon Started");
+    println!("AI-Shot Daemon Started");
     println!("   Press Ctrl+Alt+X to capture a screenshot");
     println!("   Press Ctrl+C to exit");
 
@@ -145,7 +145,7 @@ fn run_daemon() -> Result<()> {
 
 /// Captures the screen immediately and spawns the UI process.
 fn capture_and_spawn(app: std::sync::Arc<AiShot>) {
-    println!("📸 Hotkey triggered! Capturing...");
+    println!("Hotkey triggered! Capturing...");
     
     // Capture immediately in this process (fast, no startup overhead)
     // We capture the primary monitor (0) for now.

@@ -84,7 +84,6 @@ impl AiShot {
     /// # Errors
     ///
     /// Returns an error if:
-    /// - `GEMINI_API_KEY` is not set in the environment
     /// - Screen capture initialization fails (e.g., no display available)
     pub fn new() -> Result<Self> {
         let config = Config::load()?;

@@ -490,16 +490,16 @@ impl eframe::App for SnippingTool {
                     draw_selection_border(ui.painter(), selection_rect, 2.0, egui::Color32::WHITE);
 
                     // Show interaction window when selection is finalized
-                    if self.is_selection_finalized {
-                        let window_width = 400.0;
-                        let (window_x, window_y, pivot) = calculate_popup_position(
-                            selection_rect,
-                            screen_rect,
-                            window_width,
-                            10.0,
-                            400.0,
-                        );
-
+                if self.is_selection_finalized {
+                    // responsive width: 30% of screen width, clamped between 400 and 800
+                    let window_width = (screen_rect.width() * 0.3).clamp(400.0, 800.0);
+                    let (window_x, window_y, pivot) = calculate_popup_position(
+                        selection_rect,
+                        screen_rect,
+                        window_width,
+                        10.0,
+                        400.0,
+                    );
                         egui::Area::new(egui::Id::new("interaction_area"))
                             .fixed_pos(egui::pos2(window_x, window_y))
                             .pivot(pivot)
