@@ -66,6 +66,8 @@ pub struct Settings {
     pub system_prompt: String,
     pub thinking_enabled: bool,
     pub google_search: bool,
+    #[serde(default)]
+    pub api_key: String,
 }
 
 impl Settings {
@@ -95,6 +97,7 @@ impl Settings {
             system_prompt: String::new(),
             thinking_enabled: false,
             google_search: false,
+            api_key: String::new(),
         }
     }
 
@@ -117,7 +120,10 @@ impl SnippingTool {
     pub fn new(screenshot: DynamicImage, result: Arc<Mutex<SelectionResult>>, config: Config) -> Self {
         let (tx, rx) = channel();
         
-        let initial_settings = Settings::load(config.model_name.clone());
+        let mut initial_settings = Settings::load(config.model_name.clone());
+        if initial_settings.api_key.is_empty() {
+            initial_settings.api_key = config.gemini_api_key.clone();
+        }
         
         Self {
             image_texture: None,
@@ -169,6 +175,7 @@ impl SnippingTool {
                         // Create a temporary config with the selected model
                         let mut task_config = config.clone();
                         task_config.model_name = settings.model.clone();
+                        task_config.gemini_api_key = settings.api_key.clone();
 
                         let client = match GeminiClient::new(&task_config) {
                              Ok(c) => c,
@@ -470,6 +477,10 @@ impl eframe::App for SnippingTool {
                                                  // Google Search
                                                  ui.checkbox(&mut self.settings.google_search, "Use Google Search");
                                                  
+                                                 // API Key
+                                                 ui.label("API Key:");
+                                                 ui.add(egui::TextEdit::singleline(&mut self.settings.api_key).password(true).hint_text("Paste Gemini API Key"));
+
                                                  // System Prompt
                                                  ui.label("System Instructions:");
                                                  ui.add(
