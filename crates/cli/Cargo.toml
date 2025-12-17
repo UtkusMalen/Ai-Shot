@@ -8,12 +8,12 @@ ai-shot-core = { path = "../core" }
 anyhow.workspace = true
 tokio.workspace = true
 clap.workspace = true
-dotenvy.workspace = true
 rdev = "0.5"
+image.workspace = true
 
 [package.metadata.deb]
 name = "ai-shot"
-maintainer = "Ostap <ostap@example.com>"
+maintainer = "Ostap"
 copyright = "2024, Ostap"
 depends = "$auto"
 section = "utils"
