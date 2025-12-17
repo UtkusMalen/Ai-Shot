@@ -134,6 +134,9 @@ impl SnippingTool {
 
 impl eframe::App for SnippingTool {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Enforce dark mode
+        ctx.set_visuals(egui::Visuals::dark());
+
         // Check for async results
         while let Ok(event) = self.rx.try_recv() {
             match event {
