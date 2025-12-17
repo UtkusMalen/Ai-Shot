@@ -1,0 +1,12 @@
+[package]
+name = "ai-shot-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ai-shot-core = { path = "../core" }
+anyhow.workspace = true
+tokio.workspace = true
+clap.workspace = true
+dotenvy.workspace = true
+arboard.workspace = true

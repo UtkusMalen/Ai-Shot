@@ -1,0 +1,34 @@
+[workspace]
+members = [
+    "crates/core",
+    "crates/cli"
+]
+resolver = "2"
+
+[workspace.dependencies]
+# Error handling
+anyhow = "1.0.100"
+thiserror = "2.0.17"
+
+# Async runtime
+tokio = { version = "1.48.0", features = ["full"] }
+
+# Gemini API client
+gemini-rust = "1.4.0"
+
+# System / Screen capture
+screenshots = "0.8"
+clap = { version = "4.5.53", features = ["derive"] }
+arboard = "3.6.1"
+
+# Image processing
+image = "0.25.9"
+base64 = "0.22.1"
+
+# UI / Overlay
+eframe = "0.33.3"
+
+# Environment
+dotenvy = "0.15.7"
+
+url = "2.5.7"
